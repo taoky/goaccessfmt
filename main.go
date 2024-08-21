@@ -1,12 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ncruces/go-strftime"
 )
 
 func todo() {
@@ -74,28 +79,86 @@ var dates = GPreConfDate{
 	Sec:    "%s",       // Squid (sec)
 }
 
+var httpMethods = []string{
+	"OPTIONS",
+	"GET",
+	"HEAD",
+	"POST",
+	"PUT",
+	"DELETE",
+	"TRACE",
+	"CONNECT",
+	"PATCH",
+	"SEARCH",
+	/* WebDav */
+	"PROPFIND",
+	"PROPPATCH",
+	"MKCOL",
+	"COPY",
+	"MOVE",
+	"LOCK",
+	"UNLOCK",
+	"VERSION-CONTROL",
+	"REPORT",
+	"CHECKOUT",
+	"CHECKIN",
+	"UNCHECKOUT",
+	"MKWORKSPACE",
+	"UPDATE",
+	"LABEL",
+	"MERGE",
+	"BASELINE-CONTROL",
+	"MKACTIVITY",
+	"ORDERPATCH",
+}
+
+func extractMethod(token []byte) []byte {
+	for _, method := range httpMethods {
+		if strings.HasPrefix(string(bytes.ToUpper(token)), method) {
+			return []byte(method)
+		}
+	}
+	return nil
+}
+
+var httpProtocols = []string{
+	"HTTP/1.0",
+	"HTTP/1.1",
+	"HTTP/2",
+	"HTTP/3",
+}
+
+func extractProtocol(token []byte) []byte {
+	for _, protocol := range httpProtocols {
+		if strings.HasPrefix(string(bytes.ToUpper(token)), protocol) {
+			return []byte(protocol)
+		}
+	}
+	return nil
+}
+
 type GLogItem struct {
 	agent       string
-	date        string
-	host        string
+	Date        string
+	Host        string
 	keyphrase   string
-	method      string
-	protocol    string
-	qstr        string
+	Method      string
+	Protocol    string
+	Qstr        string
 	ref         string
-	req         string
+	Req         string
 	status      int
-	time        string
-	vhost       string
-	userid      string
-	cacheStatus string
+	Time        string
+	VHost       string
+	Userid      string
+	CacheStatus string
 
 	site string
 
 	respSize   int
 	serve_time int
 
-	numdate int
+	Numdate int
 
 	// UMS
 	mimeType      string
@@ -103,7 +166,34 @@ type GLogItem struct {
 	tlsCypher     string
 	tlsTypeCypher string
 
-	dt time.Time
+	Dt time.Time
+}
+
+const (
+	ERR_SPEC_TOKN_NUL = 0x1
+	ERR_SPEC_TOKN_INV = 0x2
+	ERR_SPEC_SFMT_MIS = 0x3
+	ERR_SPEC_LINE_INV = 0x4
+)
+
+func parseSpecErr(code int, spec byte, tkn []byte) error {
+	tknStr := "-"
+	if len(tkn) > 0 {
+		tknStr = string(tkn)
+	}
+
+	switch code {
+	case ERR_SPEC_TOKN_NUL:
+		return fmt.Errorf("Token for '%%%c' specifier is NULL.", spec)
+	case ERR_SPEC_TOKN_INV:
+		return fmt.Errorf("Token '%s' doesn't match specifier '%%%c'", tknStr, spec)
+	case ERR_SPEC_SFMT_MIS:
+		return fmt.Errorf("Missing braces '%s' and ignore chars for specifier '%%%c'", tknStr, spec)
+	case ERR_SPEC_LINE_INV:
+		return errors.New("Incompatible format due to early parsed line ending '\\0'.")
+	default:
+		return fmt.Errorf("unknown error code: %d", code)
+	}
 }
 
 // isJSONLogFormat determines if we have a valid JSON format
@@ -172,6 +262,10 @@ type Config struct {
 	IsJSON                bool
 	jsonMap               map[string]string
 	DateSpecHr            int // 1: hr, 2: min
+	Timezone              time.Location
+	DoubleDecodeEnabled   bool
+	AppendMethod          bool
+	AppendProtocol        bool
 }
 
 func containsSpecifier(conf *Config) {
@@ -386,12 +480,13 @@ func joinKey(prefix, key string) string {
 	return prefix + "." + key
 }
 
-func setupConfig(logfmt string, datefmt string, timefmt string) Config {
+func setupConfig(logfmt string, datefmt string, timefmt string, timezone *time.Location) Config {
 	var conf Config
 	conf.IsJSON = isJSONLogFormat(logfmt)
 	conf.LogFormat = unescapeStr(logfmt)
 	conf.DateFormat = unescapeStr(datefmt)
 	conf.TimeFormat = unescapeStr(timefmt)
+	conf.Timezone = *timezone
 	containsSpecifier(&conf)
 
 	if conf.IsJSON {
@@ -419,20 +514,29 @@ func getFmtFromPreset(preset string) (string, string, string, error) {
 		datefmt = dates.Usec
 		timefmt = times.Usec
 	case "SQUID":
+		fallthrough
 	case "CADDY":
 		datefmt = dates.Sec
 		timefmt = times.Sec
 	case "AWSELB":
+		fallthrough
 	case "AWSALB":
+		fallthrough
 	case "CLOUDFRONT":
+		fallthrough
 	case "W3C":
 		datefmt = dates.W3C
 		timefmt = times.Fmt24
 	case "COMMON":
+		fallthrough
 	case "VCOMMON":
+		fallthrough
 	case "COMBINED":
+		fallthrough
 	case "VCOMBINED":
+		fallthrough
 	case "AWSS3":
+		fallthrough
 	case "TRAEFIKCLF":
 		datefmt = dates.Apache
 		timefmt = times.Fmt24
@@ -504,7 +608,498 @@ func parseJSONFormat(conf Config, line string, logitem *GLogItem) error {
 }
 
 func parseFormat(conf Config, line string, logitem *GLogItem, fmt string) error {
+	if line == "" {
+		return errors.New("empty line")
+	}
+	perc := 0
+	tilde := 0
+	lineBytesMut := []byte(line)
+	fmtBytesMut := []byte(fmt)
+	for i, r := range []byte(fmt) {
+		if r == '%' {
+			perc++
+			continue
+		}
+		if r == '~' && perc == 0 {
+			tilde++
+			continue
+		}
+		if len(lineBytesMut) == 0 {
+			return parseSpecErr(ERR_SPEC_LINE_INV, '-', nil)
+		}
+		if lineBytesMut[0] == '\n' {
+			return nil
+		}
+		if tilde > 0 && r != 0 {
+			if len(lineBytesMut) == 0 {
+				return nil
+			}
+			fmtBytesMut = []byte(fmt)[i:]
+			if err := specialSpecifier(logitem, &lineBytesMut, &fmtBytesMut); err != nil {
+				return err
+			}
+			tilde = 0
+		} else if perc > 0 && r != 0 {
+			if len(lineBytesMut) == 0 {
+				return nil
+			}
+			fmtBytesMut = []byte(fmt)[i:]
+			end := getDelim(fmtBytesMut)
+			if err := parseSpecifier(conf, logitem, &lineBytesMut, fmtBytesMut, end); err != nil {
+				return err
+			}
+			perc = 0
+		} else if perc > 0 && r == ' ' {
+			return errors.New("space after %")
+		} else {
+			lineBytesMut = lineBytesMut[1:]
+		}
+	}
+	return nil
+}
+
+func getDelim(p []byte) byte {
+	// done, nothing to do
+	if len(p) < 2 {
+		return 0
+	}
+
+	// add the first delim
+	return p[1]
+}
+
+// extractBraces parses the special host specifier and extracts the characters
+// that need to be rejected when attempting to parse the XFF field.
+// If unable to find both curly braces (boundaries), it returns an empty string and an error.
+// On success, it returns the extracted reject set.
+func extractBraces(p *string) (string, error) {
+	s := *p
+	var b1, b2 int
+	esc := false
+
+	// Iterate over the log format
+	for i, c := range s {
+		if c == '\\' {
+			esc = true
+		} else if c == '{' && !esc {
+			b1 = i
+		} else if c == '}' && !esc {
+			b2 = i
+			break
+		} else {
+			esc = false
+		}
+	}
+
+	if b1 == 0 || b2 == 0 {
+		return "", errors.New("unable to find both curly braces")
+	}
+
+	len := b2 - (b1 + 1)
+	if len <= 0 {
+		return "", errors.New("invalid brace content")
+	}
+
+	// Found braces, extract 'reject' character set
+	ret := s[b1+1 : b2]
+	*p = s[b2+1:]
+
+	return ret, nil
+}
+
+func specialSpecifier(logitem *GLogItem, line *[]byte, format *[]byte) error {
+	if (*format)[0] != 'h' {
+		return nil
+	}
+	// find_xff_host() todo
+	// For example, "~h{, }" is used in order to parse "11.25.11.53, 17.68.33.17" field
 	todo()
+	return nil
+}
+
+func handleDefaultCaseToken(str *[]byte, p []byte) error {
+	targetChar := p[1]
+	index := bytes.IndexByte(*str, targetChar)
+
+	if index != -1 {
+		*str = (*str)[index:]
+	}
+
+	return nil
+}
+
+func parseString(str *[]byte, delims []byte, cnt int) []byte {
+	idx := 0
+	pch := *str
+	var end byte
+
+	if len(delims) > 0 {
+		if p := bytes.IndexAny(pch, string(delims)); p == -1 {
+			return nil
+		} else {
+			end = pch[p]
+		}
+	}
+
+	for i, ch := range pch {
+		if ch == end {
+			idx++
+		}
+		if (ch == end && cnt == idx) || ch == 0 {
+			result := pch[:i]
+			*str = pch[i+1:]
+			return bytes.Replace(result, []byte("\\"), []byte{}, -1)
+		}
+		if ch == '\\' && i+1 < len(pch) {
+			i++
+		}
+	}
+
+	return nil
+}
+
+// CountMatches counts the number of matches of character c in the string s1.
+//
+// If the character is not found, 0 is returned.
+// On success, the number of characters found is returned.
+func countMatches(s1 []byte, c byte) int {
+	n := 0
+	for _, char := range s1 {
+		if char == c {
+			n++
+		}
+	}
+	return n
+}
+
+// FindAlphaCount moves forward through the log byte slice until a non-space
+// character is found and returns the count of spaces encountered.
+func findAlphaCount(str []byte) int {
+	cnt := 0
+	for _, b := range str {
+		if b == ' ' {
+			cnt++
+		} else {
+			break
+		}
+	}
+	return cnt
+}
+
+const (
+	SECS = 1000000
+	MILS = 1000
+)
+
+func str2time(str, fmt []byte) (*time.Time, error) {
+	if len(str) == 0 || len(fmt) == 0 {
+		return nil, errors.New("empty time string/format")
+	}
+	us := bytes.Equal(fmt, []byte("%f"))
+	ms := bytes.Equal(fmt, []byte("%*"))
+	if us || ms {
+		ts, err := strconv.ParseUint(string(str), 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		var seconds int64
+		if us {
+			seconds = int64(ts / SECS)
+		} else if ms {
+			seconds = int64(ts / MILS)
+		} else {
+			seconds = int64(ts)
+		}
+		t := time.Unix(seconds, 0)
+
+		return &t, nil
+	}
+
+	t, err := strftime.Parse(string(fmt), string(str))
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func setDate(logitem *GLogItem, t *time.Time) {
+	logitem.Dt = logitem.Dt.AddDate(t.Year()-logitem.Dt.Year(), int(t.Month())-int(logitem.Dt.Month()), t.Day()-logitem.Dt.Day())
+}
+
+func setTime(logitem *GLogItem, t *time.Time) {
+	logitem.Dt = time.Date(logitem.Dt.Year(), logitem.Dt.Month(), logitem.Dt.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), logitem.Dt.Location())
+}
+
+func parseReq(conf Config, line []byte, method, protocol *string) []byte {
+	var req, request, dreq []byte
+	var meth, proto []byte
+
+	meth = extractMethod(line)
+
+	// couldn't find a method, so use the whole request line
+	if meth == nil {
+		request = line
+	} else {
+		// method found, attempt to parse request
+		req = line[len(meth):]
+		ptr := bytes.LastIndexByte(req, ' ')
+		if ptr != -1 {
+			proto = extractProtocol(req[ptr+1:])
+		}
+		if ptr == -1 || proto == nil {
+			return []byte("-")
+		}
+
+		req = bytes.TrimSpace(req)
+		if len(req) == 0 {
+			return []byte("-")
+		}
+
+		request = req[:bytes.LastIndexByte(req, ' ')]
+
+		if conf.AppendMethod {
+			*method = string(bytes.ToUpper(meth))
+		}
+
+		if conf.AppendProtocol {
+			*protocol = string(bytes.ToUpper(proto))
+		}
+	}
+
+	dreq = decodeURL(conf, request)
+	if dreq == nil {
+		return request
+	}
+
+	return dreq
+}
+
+// decodeURL is the entry point to decode the given URL-encoded string.
+//
+// On success, the decoded trimmed string is returned as a []byte.
+func decodeURL(conf Config, s []byte) []byte {
+	if len(s) == 0 {
+		return nil
+	}
+
+	// First decoding
+	decoded, err := url.QueryUnescape(string(s))
+	if err != nil {
+		return nil
+	}
+
+	// Double decoding if configured
+	if conf.DoubleDecodeEnabled {
+		decoded, err = url.QueryUnescape(decoded)
+		if err != nil {
+			return nil
+		}
+	}
+
+	// Strip newlines
+	decoded = strings.ReplaceAll(decoded, "\n", "")
+	decoded = strings.ReplaceAll(decoded, "\r", "")
+
+	// Trim spaces
+	decoded = strings.TrimSpace(decoded)
+
+	return []byte(decoded)
+}
+
+func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []byte, end byte) error {
+	p := specifier[0]
+	switch p {
+	case 'd':
+		if logitem.Date != "" {
+			return handleDefaultCaseToken(line, specifier)
+		}
+		// Take "Dec  2" and "Nov 22" cases into consideration
+		fmtspcs := countMatches([]byte(conf.DateFormat), ' ')
+		pch := bytes.IndexByte(*line, ' ')
+		dspc := 0
+		if fmtspcs > 0 && pch != -1 {
+			dspc = findAlphaCount((*line)[pch:])
+		}
+		tkn := parseString(line, []byte{end}, max(dspc, fmtspcs)+1)
+		if tkn == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
+		}
+		tm, err := str2time(tkn, []byte(conf.DateFormat))
+		if err != nil {
+			return err
+		}
+		date := strftime.Format(conf.DateNumFormat, *tm)
+		logitem.Date = date
+		logitem.Numdate, err = strconv.Atoi(date)
+		if err != nil {
+			return err
+		}
+		setDate(logitem, tm)
+	case 't':
+		if logitem.Time != "" {
+			return handleDefaultCaseToken(line, specifier)
+		}
+		tkn := parseString(line, []byte{end}, 1)
+		if tkn == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
+		}
+		tm, err := str2time(tkn, []byte(conf.TimeFormat))
+		if err != nil {
+			return err
+		}
+		time := strftime.Format("%H:%M:%S", *tm)
+		logitem.Time = time
+		setTime(logitem, tm)
+	case 'x':
+		if logitem.Time != "" && logitem.Date != "" {
+			return handleDefaultCaseToken(line, specifier)
+		}
+		tkn := parseString(line, []byte{end}, 1)
+		if tkn == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
+		}
+		tm, err := str2time(tkn, []byte(conf.TimeFormat))
+		if err != nil {
+			return err
+		}
+		date := strftime.Format(conf.DateNumFormat, *tm)
+		time := strftime.Format("%H:%M:%S", *tm)
+		logitem.Date = date
+		logitem.Time = time
+		logitem.Numdate, err = strconv.Atoi(date)
+		if err != nil {
+			return err
+		}
+		setDate(logitem, tm)
+		setTime(logitem, tm)
+	case 'v':
+		if logitem.VHost != "" {
+			return handleDefaultCaseToken(line, specifier)
+		}
+		tkn := parseString(line, []byte{end}, 1)
+		if tkn == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
+		}
+		logitem.VHost = string(tkn)
+	case 'e':
+		if logitem.Userid != "" {
+			return handleDefaultCaseToken(line, specifier)
+		}
+		tkn := parseString(line, []byte{end}, 1)
+		if tkn == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
+		}
+		logitem.Userid = string(tkn)
+	case 'C':
+		if logitem.CacheStatus != "" {
+			return handleDefaultCaseToken(line, specifier)
+		}
+		tkn := parseString(line, []byte{end}, 1)
+		if tkn == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
+		}
+		switch strings.ToUpper(string(tkn)) {
+		case "MISS", "BYPASS", "EXPIRED", "STALE", "UPDATING", "REVALIDATED", "HIT":
+			logitem.CacheStatus = string(tkn)
+		}
+	case 'h':
+		if logitem.Host != "" {
+			return handleDefaultCaseToken(line, specifier)
+		}
+		if (*line)[0] == '[' && len(*line) >= 2 {
+			end = ']'
+		}
+		tkn := parseString(line, []byte{end}, 1)
+		if tkn == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
+		}
+		logitem.Host = string(tkn)
+	case 'm':
+		if logitem.Method != "" {
+			return handleDefaultCaseToken(line, specifier)
+		}
+		tkn := parseString(line, []byte{end}, 1)
+		if tkn == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
+		}
+		meth := extractMethod(tkn)
+		if meth == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_INV, p, tkn)
+		}
+		logitem.Method = string(meth)
+	case 'U':
+		/* request not including method or protocol */
+		if logitem.Req != "" {
+			return handleDefaultCaseToken(line, specifier)
+		}
+		tkn := parseString(line, []byte{end}, 1)
+		if tkn == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
+		}
+		req := decodeURL(conf, tkn)
+		if req == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_INV, p, tkn)
+		}
+		logitem.Req = string(req)
+	case 'q':
+		if logitem.Qstr != "" {
+			return handleDefaultCaseToken(line, specifier)
+		}
+		tkn := parseString(line, []byte{end}, 1)
+		if tkn == nil {
+			return nil
+		}
+		qstr := decodeURL(conf, tkn)
+		if qstr == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_INV, p, tkn)
+		}
+		logitem.Qstr = string(qstr)
+	case 'H':
+		if logitem.Protocol != "" {
+			return handleDefaultCaseToken(line, specifier)
+		}
+		tkn := parseString(line, []byte{end}, 1)
+		if tkn == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
+		}
+		proto := extractProtocol(tkn)
+		if proto == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_INV, p, tkn)
+		}
+		logitem.Protocol = string(proto)
+	case 'r':
+		/* request, including method + protocol */
+		if logitem.Req != "" {
+			return handleDefaultCaseToken(line, specifier)
+		}
+		tkn := parseString(line, []byte{end}, 1)
+		if tkn == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
+		}
+		req := parseReq(conf, tkn, &logitem.Method, &logitem.Protocol)
+		logitem.Req = string(req)
+	case 's':
+	case 'b':
+	case 'R':
+	case 'u':
+	case 'L':
+	case 'T':
+	case 'D':
+	case 'n':
+	case 'k':
+	case 'K':
+	case 'M':
+	case '~':
+		s := *line
+		for i, r := range s {
+			if r != ' ' {
+				*line = s[i:]
+				break
+			}
+		}
+	default:
+		handleDefaultCaseToken(line, specifier)
+	}
 	return nil
 }
 
@@ -514,6 +1109,7 @@ func parseLine(conf Config, line string, logitem *GLogItem) error {
 	}
 	// init logitem
 	logitem.status = -1
+	logitem.Dt = logitem.Dt.In(&conf.Timezone)
 
 	var err error
 	if conf.IsJSON {
@@ -526,14 +1122,29 @@ func parseLine(conf Config, line string, logitem *GLogItem) error {
 }
 
 func main() {
-	logfmt, datefmt, timefmt, err := getFmtFromPreset("caddy")
+	logfmt, datefmt, timefmt, err := getFmtFromPreset("combined")
 	if err != nil {
 		panic(err)
 	}
-	conf := setupConfig(logfmt, datefmt, timefmt)
+	conf := setupConfig(logfmt, datefmt, timefmt, time.FixedZone("UTC+8", 8*60*60))
 	fmt.Println(conf.jsonMap)
 	var logitem GLogItem
 
 	line := `114.5.1.4 - - [11/Jun/2023:01:23:45 +0800] "GET /example/path/file.img HTTP/1.1" 429 568 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36"`
-	parseLine(conf, line, &logitem)
+	err = parseLine(conf, line, &logitem)
+	if err != nil {
+		fmt.Println(err)
+	} else {
+		fmt.Println("Host", logitem.Host)
+		fmt.Println("Date", logitem.Date)
+		fmt.Println("Numdate", logitem.Numdate)
+		fmt.Println("time.Time", logitem.Dt)
+		fmt.Println("VHost", logitem.VHost)
+		fmt.Println("Userid", logitem.Userid)
+		fmt.Println("CacheStatus", logitem.CacheStatus)
+		fmt.Println("Method", logitem.Method)
+		fmt.Println("Req", logitem.Req)
+		fmt.Println("Qstr", logitem.Qstr)
+		fmt.Println("Protocol", logitem.Protocol)
+	}
 }
