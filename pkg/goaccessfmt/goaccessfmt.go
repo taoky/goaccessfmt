@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -13,10 +14,6 @@ import (
 
 	"github.com/itchyny/timefmt-go"
 )
-
-func todo() {
-	panic("not implemented")
-}
 
 // GPreConfLog represents predefined log formats
 type GPreConfLog struct {
@@ -35,7 +32,7 @@ type GPreConfLog struct {
 	TraefikCLF   string
 }
 
-var logs = GPreConfLog{
+var Logs = GPreConfLog{
 	Combined:     `%h %^[%d:%t %^] "%r" %s %b "%R" "%u"`,
 	VCombined:    `%v:%^ %h %^[%d:%t %^] "%r" %s %b "%R" "%u"`,
 	Common:       `%h %^[%d:%t %^] "%r" %s %b`,
@@ -66,13 +63,13 @@ type GPreConfDate struct {
 	Sec    string
 }
 
-var times = GPreConfTime{
+var Times = GPreConfTime{
 	Fmt24: "%H:%M:%S",
 	Usec:  "%f", // Cloud Storage (usec)
 	Sec:   "%s", // Squid (sec)
 }
 
-var dates = GPreConfDate{
+var Dates = GPreConfDate{
 	Apache: "%d/%b/%Y", // Apache
 	W3C:    "%Y-%m-%d", // W3C
 	Usec:   "%f",       // Cloud Storage (usec)
@@ -159,6 +156,9 @@ type GLogItem struct {
 	MimeType  string
 	TLSType   string
 	TLSCypher string
+
+	// Extension
+	ServerIP string
 
 	Dt time.Time
 }
@@ -506,13 +506,13 @@ func GetFmtFromPreset(preset string) (string, string, string, error) {
 	var timefmt string
 	switch preset {
 	case "CLOUDSTORAGE":
-		datefmt = dates.Usec
-		timefmt = times.Usec
+		datefmt = Dates.Usec
+		timefmt = Times.Usec
 	case "SQUID":
 		fallthrough
 	case "CADDY":
-		datefmt = dates.Sec
-		timefmt = times.Sec
+		datefmt = Dates.Sec
+		timefmt = Times.Sec
 	case "AWSELB":
 		fallthrough
 	case "AWSALB":
@@ -520,8 +520,8 @@ func GetFmtFromPreset(preset string) (string, string, string, error) {
 	case "CLOUDFRONT":
 		fallthrough
 	case "W3C":
-		datefmt = dates.W3C
-		timefmt = times.Fmt24
+		datefmt = Dates.W3C
+		timefmt = Times.Fmt24
 	case "COMMON":
 		fallthrough
 	case "VCOMMON":
@@ -533,38 +533,38 @@ func GetFmtFromPreset(preset string) (string, string, string, error) {
 	case "AWSS3":
 		fallthrough
 	case "TRAEFIKCLF":
-		datefmt = dates.Apache
-		timefmt = times.Fmt24
+		datefmt = Dates.Apache
+		timefmt = Times.Fmt24
 	default:
 		return "", "", "", errors.New("match failed")
 	}
 	switch preset {
 	case "CLOUDSTORAGE":
-		logfmt = logs.CloudFront
+		logfmt = Logs.CloudFront
 	case "SQUID":
-		logfmt = logs.Squid
+		logfmt = Logs.Squid
 	case "CADDY":
-		logfmt = logs.Caddy
+		logfmt = Logs.Caddy
 	case "AWSELB":
-		logfmt = logs.AWSELB
+		logfmt = Logs.AWSELB
 	case "AWSALB":
-		logfmt = logs.AWSALB
+		logfmt = Logs.AWSALB
 	case "CLOUDFRONT":
-		logfmt = logs.CloudFront
+		logfmt = Logs.CloudFront
 	case "W3C":
-		logfmt = logs.W3C
+		logfmt = Logs.W3C
 	case "COMMON":
-		logfmt = logs.Common
+		logfmt = Logs.Common
 	case "VCOMMON":
-		logfmt = logs.VCommon
+		logfmt = Logs.VCommon
 	case "COMBINED":
-		logfmt = logs.Combined
+		logfmt = Logs.Combined
 	case "VCOMBINED":
-		logfmt = logs.VCombined
+		logfmt = Logs.VCombined
 	case "AWSS3":
-		logfmt = logs.AWSS3
+		logfmt = Logs.AWSS3
 	case "TRAEFIKCLF":
-		logfmt = logs.TraefikCLF
+		logfmt = Logs.TraefikCLF
 	default:
 		panic("unreachable")
 	}
@@ -729,7 +729,7 @@ func setXFFHost(logitem *GLogItem, str []byte, skips []byte, out bool) {
 			break
 		}
 
-		invalidIP = false
+		invalidIP = net.ParseIP(string(tkn)) == nil
 		if len(logitem.Host) > 0 && invalidIP {
 			break
 		}
@@ -758,7 +758,7 @@ func specialSpecifier(logitem *GLogItem, line *[]byte, format *[]byte) error {
 	}
 	p := (*format)[0]
 	if bytes.IndexByte(skips, p) == -1 && bytes.IndexByte(*line, p) != -1 {
-		extract := parseString(line, []byte{p}, 1)
+		extract := parseString(line, p, 1)
 		if extract == nil {
 			return nil
 		}
@@ -793,13 +793,13 @@ func parsedString(pch []byte, str *[]byte, i int, movePtr bool) []byte {
 	return bytes.Trim(result, " ")
 }
 
-func parseString(str *[]byte, delims []byte, cnt int) []byte {
+func parseString(str *[]byte, delim byte, cnt int) []byte {
 	idx := 0
 	pch := *str
 	var end byte
 
-	if len(delims) > 0 && delims[0] != 0 {
-		if p := bytes.IndexAny(pch, string(delims)); p == -1 {
+	if delim != 0 {
+		if p := bytes.IndexByte(pch, delim); p == -1 {
 			return nil
 		} else {
 			end = pch[p]
@@ -984,7 +984,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if fmtspcs > 0 && pch != -1 {
 			dspc = findAlphaCount((*line)[pch:])
 		}
-		tkn := parseString(line, []byte{end}, max(dspc, fmtspcs)+1)
+		tkn := parseString(line, end, max(dspc, fmtspcs)+1)
 		if tkn == nil {
 			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
 		}
@@ -1003,7 +1003,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if logitem.Time != "" {
 			return handleDefaultCaseToken(line, specifier)
 		}
-		tkn := parseString(line, []byte{end}, 1)
+		tkn := parseString(line, end, 1)
 		if tkn == nil {
 			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
 		}
@@ -1018,7 +1018,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if logitem.Time != "" && logitem.Date != "" {
 			return handleDefaultCaseToken(line, specifier)
 		}
-		tkn := parseString(line, []byte{end}, 1)
+		tkn := parseString(line, end, 1)
 		if tkn == nil {
 			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
 		}
@@ -1040,7 +1040,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if logitem.VHost != "" {
 			return handleDefaultCaseToken(line, specifier)
 		}
-		tkn := parseString(line, []byte{end}, 1)
+		tkn := parseString(line, end, 1)
 		if tkn == nil {
 			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
 		}
@@ -1049,7 +1049,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if logitem.Userid != "" {
 			return handleDefaultCaseToken(line, specifier)
 		}
-		tkn := parseString(line, []byte{end}, 1)
+		tkn := parseString(line, end, 1)
 		if tkn == nil {
 			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
 		}
@@ -1058,7 +1058,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if logitem.CacheStatus != "" {
 			return handleDefaultCaseToken(line, specifier)
 		}
-		tkn := parseString(line, []byte{end}, 1)
+		tkn := parseString(line, end, 1)
 		if tkn == nil {
 			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
 		}
@@ -1073,7 +1073,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if (*line)[0] == '[' && len(*line) >= 2 {
 			end = ']'
 		}
-		tkn := parseString(line, []byte{end}, 1)
+		tkn := parseString(line, end, 1)
 		if tkn == nil {
 			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
 		}
@@ -1082,7 +1082,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if logitem.Method != "" {
 			return handleDefaultCaseToken(line, specifier)
 		}
-		tkn := parseString(line, []byte{end}, 1)
+		tkn := parseString(line, end, 1)
 		if tkn == nil {
 			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
 		}
@@ -1096,7 +1096,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if logitem.Req != "" {
 			return handleDefaultCaseToken(line, specifier)
 		}
-		tkn := parseString(line, []byte{end}, 1)
+		tkn := parseString(line, end, 1)
 		if tkn == nil {
 			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
 		}
@@ -1109,7 +1109,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if logitem.Qstr != "" {
 			return handleDefaultCaseToken(line, specifier)
 		}
-		tkn := parseString(line, []byte{end}, 1)
+		tkn := parseString(line, end, 1)
 		if tkn == nil {
 			return nil
 		}
@@ -1122,7 +1122,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if logitem.Protocol != "" {
 			return handleDefaultCaseToken(line, specifier)
 		}
-		tkn := parseString(line, []byte{end}, 1)
+		tkn := parseString(line, end, 1)
 		if tkn == nil {
 			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
 		}
@@ -1136,7 +1136,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if logitem.Req != "" {
 			return handleDefaultCaseToken(line, specifier)
 		}
-		tkn := parseString(line, []byte{end}, 1)
+		tkn := parseString(line, end, 1)
 		if tkn == nil {
 			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
 		}
@@ -1146,7 +1146,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if logitem.Status >= 0 {
 			return handleDefaultCaseToken(line, specifier)
 		}
-		tkn := parseString(line, []byte{end}, 1)
+		tkn := parseString(line, end, 1)
 		if tkn == nil {
 			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
 		}
@@ -1159,7 +1159,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if logitem.RespSize > 0 {
 			return handleDefaultCaseToken(line, specifier)
 		}
-		tkn := parseString(line, []byte{end}, 1)
+		tkn := parseString(line, end, 1)
 		if tkn == nil {
 			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
 		}
@@ -1172,7 +1172,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if logitem.Ref != "" {
 			return handleDefaultCaseToken(line, specifier)
 		}
-		tkn := parseString(line, []byte{end}, 1)
+		tkn := parseString(line, end, 1)
 		if tkn == nil {
 			tkn = []byte("-")
 		}
@@ -1181,7 +1181,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if logitem.Agent != "" {
 			return handleDefaultCaseToken(line, specifier)
 		}
-		tkn := parseString(line, []byte{end}, 1)
+		tkn := parseString(line, end, 1)
 		if tkn != nil {
 			tkn = decodeURL(conf, tkn)
 		} else {
@@ -1192,7 +1192,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if logitem.ServeTime > 0 {
 			return handleDefaultCaseToken(line, specifier)
 		}
-		tkn := parseString(line, []byte{end}, 1)
+		tkn := parseString(line, end, 1)
 		if tkn == nil {
 			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
 		}
@@ -1205,7 +1205,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if logitem.ServeTime > 0 {
 			return handleDefaultCaseToken(line, specifier)
 		}
-		tkn := parseString(line, []byte{end}, 1)
+		tkn := parseString(line, end, 1)
 		if tkn == nil {
 			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
 		}
@@ -1226,7 +1226,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if logitem.ServeTime > 0 {
 			return handleDefaultCaseToken(line, specifier)
 		}
-		tkn := parseString(line, []byte{end}, 1)
+		tkn := parseString(line, end, 1)
 		if tkn == nil {
 			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
 		}
@@ -1239,7 +1239,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if logitem.ServeTime > 0 {
 			return handleDefaultCaseToken(line, specifier)
 		}
-		tkn := parseString(line, []byte{end}, 1)
+		tkn := parseString(line, end, 1)
 		if tkn == nil {
 			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
 		}
@@ -1252,7 +1252,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if logitem.TLSCypher != "" {
 			return handleDefaultCaseToken(line, specifier)
 		}
-		tkn := parseString(line, []byte{end}, 1)
+		tkn := parseString(line, end, 1)
 		if tkn == nil {
 			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
 		}
@@ -1261,7 +1261,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if logitem.TLSType != "" {
 			return handleDefaultCaseToken(line, specifier)
 		}
-		tkn := parseString(line, []byte{end}, 1)
+		tkn := parseString(line, end, 1)
 		if tkn == nil {
 			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
 		}
@@ -1270,7 +1270,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if logitem.MimeType != "" {
 			return handleDefaultCaseToken(line, specifier)
 		}
-		tkn := parseString(line, []byte{end}, 1)
+		tkn := parseString(line, end, 1)
 		if tkn == nil {
 			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
 		}
@@ -1283,6 +1283,16 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 				break
 			}
 		}
+	case 'S':
+		// goaccessfmt extension
+		if logitem.ServerIP != "" {
+			return handleDefaultCaseToken(line, specifier)
+		}
+		tkn := parseString(line, end, 1)
+		if tkn == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
+		}
+		logitem.ServerIP = string(tkn)
 	default:
 		return handleDefaultCaseToken(line, specifier)
 	}
@@ -1294,6 +1304,7 @@ func ParseLine(conf Config, line string, logitem *GLogItem) error {
 		return errors.New("invalid line")
 	}
 	// init logitem
+	*logitem = GLogItem{}
 	logitem.Status = -1
 	logitem.Dt = logitem.Dt.In(&conf.Timezone)
 

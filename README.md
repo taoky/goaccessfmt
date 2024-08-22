@@ -11,3 +11,7 @@ gcc -fsanitize=address -g -Wall reference.c && ASAN_OPTIONS=detect_leaks=0 ./a.o
 ```
 
 Obviously this program uses code from goaccess project (MIT).
+
+## Note
+
+goaccessfmt adds an "extension" specifier that does not exist in original goaccess: `%S`. It sets `logitem.ServerIP`.
