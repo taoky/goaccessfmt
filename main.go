@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ncruces/go-strftime"
+	"github.com/itchyny/timefmt-go"
 )
 
 func todo() {
@@ -138,33 +138,29 @@ func extractProtocol(token []byte) []byte {
 }
 
 type GLogItem struct {
-	agent       string
+	Agent       string
 	Date        string
 	Host        string
-	keyphrase   string
 	Method      string
 	Protocol    string
 	Qstr        string
-	ref         string
+	Ref         string
 	Req         string
-	status      int
+	Status      int
 	Time        string
 	VHost       string
 	Userid      string
 	CacheStatus string
 
-	site string
-
-	respSize   int
-	serve_time int
+	RespSize  uint64
+	ServeTime uint64
 
 	Numdate int
 
 	// UMS
-	mimeType      string
-	tlsType       string
-	tlsCypher     string
-	tlsTypeCypher string
+	MimeType  string
+	TLSType   string
+	TLSCypher string
 
 	Dt time.Time
 }
@@ -184,13 +180,13 @@ func parseSpecErr(code int, spec byte, tkn []byte) error {
 
 	switch code {
 	case ERR_SPEC_TOKN_NUL:
-		return fmt.Errorf("Token for '%%%c' specifier is NULL.", spec)
+		return fmt.Errorf("token for '%%%c' specifier is NULL", spec)
 	case ERR_SPEC_TOKN_INV:
-		return fmt.Errorf("Token '%s' doesn't match specifier '%%%c'", tknStr, spec)
+		return fmt.Errorf("token '%s' doesn't match specifier '%%%c'", tknStr, spec)
 	case ERR_SPEC_SFMT_MIS:
-		return fmt.Errorf("Missing braces '%s' and ignore chars for specifier '%%%c'", tknStr, spec)
+		return fmt.Errorf("missing braces '%s' and ignore chars for specifier '%%%c'", tknStr, spec)
 	case ERR_SPEC_LINE_INV:
-		return errors.New("Incompatible format due to early parsed line ending '\\0'.")
+		return errors.New("incompatible format due to early parsed line ending '\\0'")
 	default:
 		return fmt.Errorf("unknown error code: %d", code)
 	}
@@ -462,7 +458,7 @@ func parseValue(prefix string, v interface{}, callback callback) error {
 	case string:
 		return callback(prefix, value)
 	case float64:
-		return callback(prefix, fmt.Sprintf("%v", value))
+		return callback(prefix, strconv.FormatFloat(value, 'f', -1, 64))
 	case bool:
 		return callback(prefix, fmt.Sprintf("%v", value))
 	case nil:
@@ -718,7 +714,12 @@ func specialSpecifier(logitem *GLogItem, line *[]byte, format *[]byte) error {
 }
 
 func handleDefaultCaseToken(str *[]byte, p []byte) error {
-	targetChar := p[1]
+	var targetChar byte
+	if len(p) < 2 {
+		targetChar = 0
+	} else {
+		targetChar = p[1]
+	}
 	index := bytes.IndexByte(*str, targetChar)
 
 	if index != -1 {
@@ -728,12 +729,20 @@ func handleDefaultCaseToken(str *[]byte, p []byte) error {
 	return nil
 }
 
+func parsedString(pch []byte, str *[]byte, i int, movePtr bool) []byte {
+	result := pch[:i]
+	if movePtr {
+		*str = pch[i:]
+	}
+	return bytes.Trim(result, " ")
+}
+
 func parseString(str *[]byte, delims []byte, cnt int) []byte {
 	idx := 0
 	pch := *str
 	var end byte
 
-	if len(delims) > 0 {
+	if len(delims) > 0 && delims[0] != 0 {
 		if p := bytes.IndexAny(pch, string(delims)); p == -1 {
 			return nil
 		} else {
@@ -741,18 +750,20 @@ func parseString(str *[]byte, delims []byte, cnt int) []byte {
 		}
 	}
 
-	for i, ch := range pch {
-		if ch == end {
-			idx++
+	if end != 0 {
+		for i, ch := range pch {
+			if ch == end {
+				idx++
+			}
+			if (ch == end && cnt == idx) || ch == 0 {
+				return parsedString(pch, str, i, true)
+			}
+			if ch == '\\' && i+1 < len(pch) {
+				i++
+			}
 		}
-		if (ch == end && cnt == idx) || ch == 0 {
-			result := pch[:i]
-			*str = pch[i+1:]
-			return bytes.Replace(result, []byte("\\"), []byte{}, -1)
-		}
-		if ch == '\\' && i+1 < len(pch) {
-			i++
-		}
+	} else {
+		return parsedString(pch, str, len(pch), true)
 	}
 
 	return nil
@@ -815,7 +826,7 @@ func str2time(str, fmt []byte) (*time.Time, error) {
 		return &t, nil
 	}
 
-	t, err := strftime.Parse(string(fmt), string(str))
+	t, err := timefmt.Parse(string(str), string(fmt))
 	if err != nil {
 		return nil, err
 	}
@@ -908,6 +919,7 @@ func decodeURL(conf Config, s []byte) []byte {
 
 func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []byte, end byte) error {
 	p := specifier[0]
+	// fmt.Println(string(p), "|", string(*line), "|", string(end), "|")
 	switch p {
 	case 'd':
 		if logitem.Date != "" {
@@ -928,7 +940,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if err != nil {
 			return err
 		}
-		date := strftime.Format(conf.DateNumFormat, *tm)
+		date := timefmt.Format(*tm, conf.DateNumFormat)
 		logitem.Date = date
 		logitem.Numdate, err = strconv.Atoi(date)
 		if err != nil {
@@ -947,7 +959,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if err != nil {
 			return err
 		}
-		time := strftime.Format("%H:%M:%S", *tm)
+		time := timefmt.Format(*tm, "%H:%M:%S")
 		logitem.Time = time
 		setTime(logitem, tm)
 	case 'x':
@@ -962,8 +974,8 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if err != nil {
 			return err
 		}
-		date := strftime.Format(conf.DateNumFormat, *tm)
-		time := strftime.Format("%H:%M:%S", *tm)
+		date := timefmt.Format(*tm, conf.DateNumFormat)
+		time := timefmt.Format(*tm, "%H:%M:%S")
 		logitem.Date = date
 		logitem.Time = time
 		logitem.Numdate, err = strconv.Atoi(date)
@@ -1079,16 +1091,138 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		req := parseReq(conf, tkn, &logitem.Method, &logitem.Protocol)
 		logitem.Req = string(req)
 	case 's':
+		if logitem.Status >= 0 {
+			return handleDefaultCaseToken(line, specifier)
+		}
+		tkn := parseString(line, []byte{end}, 1)
+		if tkn == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
+		}
+		status, err := strconv.ParseInt(string(tkn), 10, 32)
+		if err != nil {
+			return err
+		}
+		logitem.Status = int(status)
 	case 'b':
+		if logitem.RespSize > 0 {
+			return handleDefaultCaseToken(line, specifier)
+		}
+		tkn := parseString(line, []byte{end}, 1)
+		if tkn == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
+		}
+		bandw, err := strconv.ParseUint(string(tkn), 10, 64)
+		if err != nil {
+			bandw = 0
+		}
+		logitem.RespSize = bandw
 	case 'R':
+		if logitem.Ref != "" {
+			return handleDefaultCaseToken(line, specifier)
+		}
+		tkn := parseString(line, []byte{end}, 1)
+		if tkn == nil {
+			tkn = []byte("-")
+		}
+		logitem.Ref = string(tkn)
 	case 'u':
+		if logitem.Agent != "" {
+			return handleDefaultCaseToken(line, specifier)
+		}
+		tkn := parseString(line, []byte{end}, 1)
+		if tkn != nil {
+			tkn = decodeURL(conf, tkn)
+		} else {
+			tkn = []byte("-")
+		}
+		logitem.Agent = string(tkn)
 	case 'L':
+		if logitem.ServeTime > 0 {
+			return handleDefaultCaseToken(line, specifier)
+		}
+		tkn := parseString(line, []byte{end}, 1)
+		if tkn == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
+		}
+		serveSecs, err := strconv.ParseUint(string(tkn), 10, 64)
+		if err != nil {
+			serveSecs = 0
+		}
+		logitem.ServeTime = serveSecs * 1000
 	case 'T':
+		if logitem.ServeTime > 0 {
+			return handleDefaultCaseToken(line, specifier)
+		}
+		tkn := parseString(line, []byte{end}, 1)
+		if tkn == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
+		}
+		var serveSecs float64
+		var serveSecsUll uint64
+		var err error
+		if bytes.IndexByte(tkn, '.') != -1 {
+			serveSecs, err = strconv.ParseFloat(string(tkn), 64)
+		} else {
+			serveSecsUll, err = strconv.ParseUint(string(tkn), 10, 64)
+			serveSecs = float64(serveSecsUll)
+		}
+		if err != nil {
+			serveSecs = 0
+		}
+		logitem.ServeTime = uint64(serveSecs * 1000000)
 	case 'D':
+		if logitem.ServeTime > 0 {
+			return handleDefaultCaseToken(line, specifier)
+		}
+		tkn := parseString(line, []byte{end}, 1)
+		if tkn == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
+		}
+		serveTime, err := strconv.ParseUint(string(tkn), 10, 64)
+		if err != nil {
+			serveTime = 0
+		}
+		logitem.ServeTime = serveTime
 	case 'n':
+		if logitem.ServeTime > 0 {
+			return handleDefaultCaseToken(line, specifier)
+		}
+		tkn := parseString(line, []byte{end}, 1)
+		if tkn == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
+		}
+		serveTime, err := strconv.ParseUint(string(tkn), 10, 64)
+		if err != nil {
+			serveTime = 0
+		}
+		logitem.ServeTime = serveTime / 1000
 	case 'k':
+		if logitem.TLSCypher != "" {
+			return handleDefaultCaseToken(line, specifier)
+		}
+		tkn := parseString(line, []byte{end}, 1)
+		if tkn == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
+		}
+		logitem.TLSCypher = string(tkn)
 	case 'K':
+		if logitem.TLSType != "" {
+			return handleDefaultCaseToken(line, specifier)
+		}
+		tkn := parseString(line, []byte{end}, 1)
+		if tkn == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
+		}
+		logitem.TLSType = string(tkn)
 	case 'M':
+		if logitem.MimeType != "" {
+			return handleDefaultCaseToken(line, specifier)
+		}
+		tkn := parseString(line, []byte{end}, 1)
+		if tkn == nil {
+			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
+		}
+		logitem.MimeType = string(tkn)
 	case '~':
 		s := *line
 		for i, r := range s {
@@ -1108,7 +1242,7 @@ func parseLine(conf Config, line string, logitem *GLogItem) error {
 		return errors.New("invalid line")
 	}
 	// init logitem
-	logitem.status = -1
+	logitem.Status = -1
 	logitem.Dt = logitem.Dt.In(&conf.Timezone)
 
 	var err error
@@ -1121,30 +1255,57 @@ func parseLine(conf Config, line string, logitem *GLogItem) error {
 	return err
 }
 
+func PrintLog(logitem *GLogItem) {
+	fmt.Println("Host", logitem.Host)
+	fmt.Println("Date", logitem.Date)
+	fmt.Println("Numdate", logitem.Numdate)
+	fmt.Println("time.Time", logitem.Dt)
+	fmt.Println("VHost", logitem.VHost)
+	fmt.Println("Userid", logitem.Userid)
+	fmt.Println("CacheStatus", logitem.CacheStatus)
+	fmt.Println("Method", logitem.Method)
+	fmt.Println("Req", logitem.Req)
+	fmt.Println("Qstr", logitem.Qstr)
+	fmt.Println("Protocol", logitem.Protocol)
+	fmt.Println("Status", logitem.Status)
+	fmt.Println("RespSize", logitem.RespSize)
+	fmt.Println("Ref", logitem.Ref)
+	fmt.Println("Agent", logitem.Agent)
+	fmt.Println("ServeTime", logitem.ServeTime)
+	fmt.Println("TLSCypher", logitem.TLSCypher)
+	fmt.Println("TLSType", logitem.TLSType)
+	fmt.Println("MimeType", logitem.MimeType)
+}
+
 func main() {
 	logfmt, datefmt, timefmt, err := getFmtFromPreset("combined")
 	if err != nil {
 		panic(err)
 	}
 	conf := setupConfig(logfmt, datefmt, timefmt, time.FixedZone("UTC+8", 8*60*60))
-	fmt.Println(conf.jsonMap)
 	var logitem GLogItem
 
-	line := `114.5.1.4 - - [11/Jun/2023:01:23:45 +0800] "GET /example/path/file.img HTTP/1.1" 429 568 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36"`
+	line := `114.5.1.4 - - [11/Jun/2023:11:23:45 +0800] "GET /example/path/file.img HTTP/1.1" 429 568 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36"`
 	err = parseLine(conf, line, &logitem)
 	if err != nil {
 		fmt.Println(err)
 	} else {
-		fmt.Println("Host", logitem.Host)
-		fmt.Println("Date", logitem.Date)
-		fmt.Println("Numdate", logitem.Numdate)
-		fmt.Println("time.Time", logitem.Dt)
-		fmt.Println("VHost", logitem.VHost)
-		fmt.Println("Userid", logitem.Userid)
-		fmt.Println("CacheStatus", logitem.CacheStatus)
-		fmt.Println("Method", logitem.Method)
-		fmt.Println("Req", logitem.Req)
-		fmt.Println("Qstr", logitem.Qstr)
-		fmt.Println("Protocol", logitem.Protocol)
+		PrintLog(&logitem)
+		fmt.Println()
+	}
+
+	logfmt, datefmt, timefmt, err = getFmtFromPreset("caddy")
+	if err != nil {
+		panic(err)
+	}
+	conf = setupConfig(logfmt, datefmt, timefmt, time.FixedZone("UTC+8", 8*60*60))
+	logitem = GLogItem{}
+	line = `{"level":"info","ts":1646861401.5241024,"logger":"http.log.access","msg":"handled request","request":{"remote_ip":"127.0.0.1","remote_port":"41342","client_ip":"127.0.0.1","proto":"HTTP/2.0","method":"GET","host":"localhost","uri":"/","headers":{"User-Agent":["curl/7.82.0"],"Accept":["*/*"],"Accept-Encoding":["gzip, deflate, br"]},"tls":{"resumed":false,"version":772,"cipher_suite":4865,"proto":"h2","server_name":"example.com"}},"bytes_read": 0,"user_id":"","duration":0.000929675,"size":10900,"status":200,"resp_headers":{"Server":["Caddy"],"Content-Encoding":["gzip"],"Content-Type":["text/html; charset=utf-8"],"Vary":["Accept-Encoding"]}}`
+	err = parseLine(conf, line, &logitem)
+	if err != nil {
+		fmt.Println(err)
+	} else {
+		PrintLog(&logitem)
+		fmt.Println()
 	}
 }
