@@ -36,6 +36,8 @@ func TestCombined(t *testing.T) {
 		RespSize: 568,
 		Ref:      "-",
 		Agent:    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36",
+		Method:   "GET",
+		Protocol: "HTTP/1.1",
 	}
 	if !reflect.DeepEqual(logitem, expectedLogitem) {
 		t.Errorf("want (%v), get (%v)", expectedLogitem, logitem)

@@ -258,8 +258,6 @@ type Config struct {
 	DateSpecHr            int // 1: hr, 2: min
 	Timezone              time.Location
 	DoubleDecodeEnabled   bool
-	AppendMethod          bool
-	AppendProtocol        bool
 }
 
 func containsSpecifier(conf *Config) {
@@ -874,13 +872,9 @@ func parseReq(conf Config, line []byte, method, protocol *string) []byte {
 
 		request = req[:bytes.LastIndexByte(req, ' ')]
 
-		if conf.AppendMethod {
-			*method = string(bytes.ToUpper(meth))
-		}
-
-		if conf.AppendProtocol {
-			*protocol = string(bytes.ToUpper(proto))
-		}
+		// AppendMethod and AppendProtocol are enabled by default
+		*method = string(bytes.ToUpper(meth))
+		*protocol = string(bytes.ToUpper(proto))
 	}
 
 	dreq = decodeURL(conf, request)
