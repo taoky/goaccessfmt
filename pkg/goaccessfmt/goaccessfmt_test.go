@@ -179,7 +179,7 @@ func TestServerIPExtension(t *testing.T) {
 		t.Error(err)
 	}
 	expectedServerIP := "1.2.3.4"
-	if logitem.ServerIP != expectedServerIP {
-		t.Errorf("want (%v), get (%v)", expectedServerIP, logitem.ServerIP)
+	if logitem.Server != expectedServerIP {
+		t.Errorf("want (%v), get (%v)", expectedServerIP, logitem.Server)
 	}
 }

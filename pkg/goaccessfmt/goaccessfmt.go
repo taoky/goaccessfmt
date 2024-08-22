@@ -158,7 +158,7 @@ type GLogItem struct {
 	TLSCypher string
 
 	// Extension
-	ServerIP string
+	Server string
 
 	Dt time.Time
 }
@@ -1285,14 +1285,14 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		}
 	case 'S':
 		// goaccessfmt extension
-		if logitem.ServerIP != "" {
+		if logitem.Server != "" {
 			return handleDefaultCaseToken(line, specifier)
 		}
 		tkn := parseString(line, end, 1)
 		if tkn == nil {
 			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
 		}
-		logitem.ServerIP = string(tkn)
+		logitem.Server = string(tkn)
 	default:
 		return handleDefaultCaseToken(line, specifier)
 	}
