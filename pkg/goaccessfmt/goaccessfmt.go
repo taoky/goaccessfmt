@@ -163,14 +163,16 @@ type GLogItem struct {
 	Dt time.Time
 }
 
+type errSpec int
+
 const (
-	ERR_SPEC_TOKN_NUL = 0x1
-	ERR_SPEC_TOKN_INV = 0x2
-	ERR_SPEC_SFMT_MIS = 0x3
-	ERR_SPEC_LINE_INV = 0x4
+	ERR_SPEC_TOKN_NUL errSpec = 0x1 + iota
+	ERR_SPEC_TOKN_INV
+	ERR_SPEC_SFMT_MIS
+	ERR_SPEC_LINE_INV
 )
 
-func parseSpecErr(code int, spec byte, tkn []byte) error {
+func parseSpecErr(code errSpec, spec byte, tkn []byte) error {
 	tknStr := "-"
 	if len(tkn) > 0 {
 		tknStr = string(tkn)
@@ -245,32 +247,30 @@ func unescapeStr(src string) string {
 }
 
 type Config struct {
-	LogFormat             string
-	DateFormat            string
-	TimeFormat            string
-	DateNumFormat         string
-	SpecDateTimeNumFormat string
-	SpecDateTimeFormat    string
-	ServeUsecs            bool
-	Bandwidth             bool
-	IsJSON                bool
-	jsonMap               map[string]string
-	DateSpecHr            int // 1: hr, 2: min
-	Timezone              time.Location
-	DoubleDecodeEnabled   bool
+	LogFormat           string
+	DateFormat          string
+	TimeFormat          string
+	ServeUsecs          bool
+	Timezone            time.Location
+	DoubleDecodeEnabled bool
+
+	dateNumFormat string
+	bandwidth     bool
+	isJSON        bool
+	jsonMap       map[string]string
 }
 
 func containsSpecifier(conf *Config) {
 	// Reset flags
 	conf.ServeUsecs = false
-	conf.Bandwidth = false
+	conf.bandwidth = false
 
 	if conf.LogFormat == "" {
 		return
 	}
 
 	if strings.Contains(conf.LogFormat, "%b") {
-		conf.Bandwidth = true
+		conf.bandwidth = true
 	}
 	if strings.Contains(conf.LogFormat, "%D") ||
 		strings.Contains(conf.LogFormat, "%T") ||
@@ -317,13 +317,6 @@ func setFormatDate(conf Config) string {
 	return cleanDateTimeFormat(conf.DateFormat)
 }
 
-func setFormatTime(conf Config) string {
-	if hasTimestamp(conf.DateFormat) || conf.TimeFormat == "%T" {
-		return "%H%M%S"
-	}
-	return cleanDateTimeFormat(conf.TimeFormat)
-}
-
 // isDateAbbreviated determines if the given specifier character is an abbreviated type of date.
 //
 // If it is, true is returned, otherwise, false is returned.
@@ -345,7 +338,7 @@ func setDateNumFormat(conf *Config) bool {
 	}
 
 	if isDateAbbreviated(fdate) {
-		conf.DateNumFormat = "%Y%m%d"
+		conf.dateNumFormat = "%Y%m%d"
 		return true
 	}
 
@@ -366,59 +359,9 @@ func setDateNumFormat(conf *Config) bool {
 		buf.WriteString("%d")
 	}
 
-	conf.DateNumFormat = buf.String()
+	conf.dateNumFormat = buf.String()
 
 	return buf.Len() > 0
-}
-
-func setSpecDateTimeNumFormat(conf *Config) {
-	df := conf.DateNumFormat
-	tf := setFormatTime(*conf)
-
-	if df == "" || tf == "" {
-		return
-	}
-
-	var buf string
-
-	switch {
-	case conf.DateSpecHr == 1 && strings.Contains(tf, "H"):
-		buf = df + "%H"
-	case conf.DateSpecHr == 2 && strings.Contains(tf, "M"):
-		buf = df + "%H%M"
-	default:
-		buf = df
-	}
-
-	conf.SpecDateTimeNumFormat = buf
-}
-
-func setSpecDateTimeFormat(conf *Config) {
-	fmt := conf.SpecDateTimeNumFormat
-	if fmt == "" {
-		return
-	}
-
-	var buf strings.Builder
-	buf.Grow(len(fmt) * 2) // Allocate enough capacity
-
-	if strings.Contains(fmt, "d") {
-		buf.WriteString("%d/")
-	}
-	if strings.Contains(fmt, "m") {
-		buf.WriteString("%b/")
-	}
-	if strings.Contains(fmt, "Y") {
-		buf.WriteString("%Y")
-	}
-	if strings.Contains(fmt, "H") {
-		buf.WriteString(":%H")
-	}
-	if strings.Contains(fmt, "M") {
-		buf.WriteString(":%M")
-	}
-
-	conf.SpecDateTimeFormat = buf.String()
 }
 
 // callback is the function type for the callback
@@ -474,14 +417,14 @@ func joinKey(prefix, key string) string {
 
 func SetupConfig(logfmt string, datefmt string, timefmt string, timezone *time.Location) (Config, error) {
 	var conf Config
-	conf.IsJSON = isJSONLogFormat(logfmt)
+	conf.isJSON = isJSONLogFormat(logfmt)
 	conf.LogFormat = unescapeStr(logfmt)
 	conf.DateFormat = unescapeStr(datefmt)
 	conf.TimeFormat = unescapeStr(timefmt)
 	conf.Timezone = *timezone
 	containsSpecifier(&conf)
 
-	if conf.IsJSON {
+	if conf.isJSON {
 		conf.jsonMap = make(map[string]string)
 		err := parseJSONString(conf.LogFormat, func(key, value string) error {
 			conf.jsonMap[key] = value
@@ -492,10 +435,7 @@ func SetupConfig(logfmt string, datefmt string, timefmt string, timezone *time.L
 		}
 	}
 
-	if setDateNumFormat(&conf) {
-		setSpecDateTimeNumFormat(&conf)
-		setSpecDateTimeFormat(&conf)
-	}
+	setDateNumFormat(&conf)
 	return conf, nil
 }
 
@@ -991,7 +931,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if err != nil {
 			return err
 		}
-		date := timefmt.Format(*tm, conf.DateNumFormat)
+		date := timefmt.Format(*tm, conf.dateNumFormat)
 		logitem.Date = date
 		_, err = strconv.Atoi(date)
 		if err != nil {
@@ -1025,7 +965,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if err != nil {
 			return err
 		}
-		date := timefmt.Format(*tm, conf.DateNumFormat)
+		date := timefmt.Format(*tm, conf.dateNumFormat)
 		time := timefmt.Format(*tm, "%H:%M:%S")
 		logitem.Date = date
 		logitem.Time = time
@@ -1308,7 +1248,7 @@ func ParseLine(conf Config, line string, logitem *GLogItem) error {
 	logitem.Dt = logitem.Dt.In(&conf.Timezone)
 
 	var err error
-	if conf.IsJSON {
+	if conf.isJSON {
 		err = parseJSONFormat(conf, line, logitem)
 	} else {
 		err = parseFormat(conf, line, logitem, conf.LogFormat)
