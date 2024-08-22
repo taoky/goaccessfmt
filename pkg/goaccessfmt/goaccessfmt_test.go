@@ -8,6 +8,8 @@ import (
 	"github.com/taoky/goaccessfmt/pkg/goaccessfmt"
 )
 
+// goaccess would NOT parse timezone
+// user needs to set a fixed timezone themselves
 var location = time.FixedZone("UTC+8", 8*60*60)
 
 func TestCombined(t *testing.T) {
@@ -76,6 +78,39 @@ func TestCaddy(t *testing.T) {
 		TLSCypher: "4865",
 		TLSType:   "h2",
 		MimeType:  "text/html; charset=utf-8",
+	}
+	if !reflect.DeepEqual(logitem, expectedLogitem) {
+		t.Errorf("want (%v), get (%v)", expectedLogitem, logitem)
+	}
+}
+
+func TestXFF(t *testing.T) {
+	logfmt := `~h{ } %^[%d:%t %^] "%r" %s %b "%R" "%u"`
+	datefmt := "%d/%b/%Y"
+	timefmt := "%T"
+	conf, err := goaccessfmt.SetupConfig(logfmt, datefmt, timefmt, location)
+	if err != nil {
+		t.Error(err)
+	}
+
+	logitem := goaccessfmt.GLogItem{}
+	line := `114.5.1.4 191.9.81.0 - - [31/May/2018:00:00:00 +0800] "GET http://example.com/test HTTP/1.1" 200 409 "-" "Dalvik/2.1.0 (Linux; U; Android 8.0.0; ONEPLUS A5010 Build/OPR1.170623.032)"`
+	err = goaccessfmt.ParseLine(conf, line, &logitem)
+	if err != nil {
+		t.Error(err)
+	}
+	expectedLogitem := goaccessfmt.GLogItem{
+		Host:     "114.5.1.4",
+		Date:     "20180531",
+		Time:     "00:00:00",
+		Dt:       time.Date(2018, 5, 31, 0, 0, 0, 0, location),
+		Req:      "http://example.com/test",
+		Agent:    "Dalvik/2.1.0 (Linux; U; Android 8.0.0; ONEPLUS A5010 Build/OPR1.170623.032)",
+		Method:   "GET",
+		Protocol: "HTTP/1.1",
+		Status:   200,
+		RespSize: 409,
+		Ref:      "-",
 	}
 	if !reflect.DeepEqual(logitem, expectedLogitem) {
 		t.Errorf("want (%v), get (%v)", expectedLogitem, logitem)

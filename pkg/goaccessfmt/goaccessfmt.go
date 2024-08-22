@@ -702,6 +702,50 @@ func extractBraces(p *[]byte) ([]byte, error) {
 	return ret, nil
 }
 
+func setXFFHost(logitem *GLogItem, str []byte, skips []byte, out bool) {
+	var tkn []byte
+	invalidIP := true
+	idx, skipsLen := 0, len(skips)
+
+	ptr := str[:]
+
+	for len(str) > 0 {
+		lenUntilSkip := bytes.IndexAny(str, string(skips))
+		if lenUntilSkip == -1 {
+			lenUntilSkip = len(str)
+		}
+
+		if lenUntilSkip == 0 {
+			str, idx = str[1:], idx+1
+			continue
+		}
+
+		if idx < skipsLen && len(logitem.Host) > 0 {
+			break
+		}
+
+		tkn = parsedString(ptr, &str, lenUntilSkip, false)
+		if len(tkn) == 0 {
+			break
+		}
+
+		invalidIP = false
+		if len(logitem.Host) > 0 && invalidIP {
+			break
+		}
+		if len(logitem.Host) == 0 && !invalidIP {
+			logitem.Host = string(tkn)
+		}
+		idx = 0
+
+		if len(logitem.Host) > 0 && out {
+			break
+		}
+
+		str = str[lenUntilSkip:]
+	}
+}
+
 func specialSpecifier(logitem *GLogItem, line *[]byte, format *[]byte) error {
 	if (*format)[0] != 'h' {
 		return nil
@@ -712,8 +756,16 @@ func specialSpecifier(logitem *GLogItem, line *[]byte, format *[]byte) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(skips)
-	todo()
+	p := (*format)[0]
+	if bytes.IndexByte(skips, p) == -1 && bytes.IndexByte(*line, p) != -1 {
+		extract := parseString(line, []byte{p}, 1)
+		if extract == nil {
+			return nil
+		}
+		setXFFHost(logitem, extract, skips, true)
+	} else {
+		setXFFHost(logitem, *line, skips, false)
+	}
 	return nil
 }
 
