@@ -250,7 +250,6 @@ type Config struct {
 	LogFormat           string
 	DateFormat          string
 	TimeFormat          string
-	ServeUsecs          bool
 	Timezone            time.Location
 	DoubleDecodeEnabled bool
 
@@ -262,7 +261,6 @@ type Config struct {
 
 func containsSpecifier(conf *Config) {
 	// Reset flags
-	conf.ServeUsecs = false
 	conf.bandwidth = false
 
 	if conf.LogFormat == "" {
@@ -271,11 +269,6 @@ func containsSpecifier(conf *Config) {
 
 	if strings.Contains(conf.LogFormat, "%b") {
 		conf.bandwidth = true
-	}
-	if strings.Contains(conf.LogFormat, "%D") ||
-		strings.Contains(conf.LogFormat, "%T") ||
-		strings.Contains(conf.LogFormat, "%L") {
-		conf.ServeUsecs = true
 	}
 }
 
