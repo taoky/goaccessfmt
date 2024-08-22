@@ -704,7 +704,6 @@ func extractBraces(p *[]byte) ([]byte, error) {
 
 func setXFFHost(logitem *GLogItem, str []byte, skips []byte, out bool) {
 	var tkn []byte
-	invalidIP := true
 	idx, skipsLen := 0, len(skips)
 
 	ptr := str[:]
@@ -729,7 +728,7 @@ func setXFFHost(logitem *GLogItem, str []byte, skips []byte, out bool) {
 			break
 		}
 
-		invalidIP = net.ParseIP(string(tkn)) == nil
+		invalidIP := net.ParseIP(string(tkn)) == nil
 		if len(logitem.Host) > 0 && invalidIP {
 			break
 		}
