@@ -155,8 +155,6 @@ type GLogItem struct {
 	RespSize  uint64
 	ServeTime uint64
 
-	Numdate int
-
 	// UMS
 	MimeType  string
 	TLSType   string
@@ -950,7 +948,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		}
 		date := timefmt.Format(*tm, conf.DateNumFormat)
 		logitem.Date = date
-		logitem.Numdate, err = strconv.Atoi(date)
+		_, err = strconv.Atoi(date)
 		if err != nil {
 			return err
 		}
@@ -986,7 +984,7 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		time := timefmt.Format(*tm, "%H:%M:%S")
 		logitem.Date = date
 		logitem.Time = time
-		logitem.Numdate, err = strconv.Atoi(date)
+		_, err = strconv.Atoi(date)
 		if err != nil {
 			return err
 		}
@@ -1266,7 +1264,7 @@ func ParseLine(conf Config, line string, logitem *GLogItem) error {
 func PrintLog(logitem *GLogItem) {
 	fmt.Println("Host", logitem.Host)
 	fmt.Println("Date", logitem.Date)
-	fmt.Println("Numdate", logitem.Numdate)
+	fmt.Println("Time", logitem.Time)
 	fmt.Println("time.Time", logitem.Dt)
 	fmt.Println("VHost", logitem.VHost)
 	fmt.Println("Userid", logitem.Userid)

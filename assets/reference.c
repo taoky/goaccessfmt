@@ -3783,6 +3783,8 @@ static void set_log_format_str(const char *oarg) {
     conf.log_format = unescape_str(oarg);
     contains_specifier(); /* set flag */
     return;
+  } else if (type == -1) {
+    conf.is_json_log_format = 0;
   }
 
   /* type not found, use whatever was given by the user then */
@@ -3800,6 +3802,8 @@ static void set_log_format_str(const char *oarg) {
 
   if (is_json_log_format(fmt))
     conf.is_json_log_format = 1;
+  else
+    conf.is_json_log_format = 0;
 
   conf.log_format = unescape_str(fmt);
   contains_specifier(); /* set flag */
@@ -5384,6 +5388,19 @@ static char *ht_get_json_logfmt(const char *key) {
   return get_ss32(hash, key);
 }
 
+void printlog(int ret, GLogItem *logitem) {
+  if (!logitem) {
+    printf("logitem returns as NULL\n");
+  } else {
+    if (ret != 0) {
+      printf("err: %s\n", logitem->errstr);
+    }
+    printf("URL: %s\n", logitem->req);
+    printf("Size: %ld\n", logitem->resp_size);
+    printf("From: %s\n", logitem->host);
+  }
+}
+
 int main(void) {
   init_pre_storage();
   init_storage();
@@ -5395,12 +5412,7 @@ int main(void) {
       "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36\"";
   GLogItem *logitem = NULL;
   int ret = parse_line(line, &logitem);
-  if (ret != 0) {
-    printf("err: %s\n", logitem->errstr);
-  }
-  printf("URL: %s\n", logitem->req);
-  printf("Size: %ld\n", logitem->resp_size);
-  printf("From: %s\n", logitem->host);
+  printlog(ret, logitem);
   line = "{\"level\":\"info\",\"ts\":1646861401.5241024,\"logger\":\"http.log."
          "access\",\"msg\":\"handled "
          "request\",\"request\":{\"remote_ip\":\"127.0.0.1\",\"remote_port\":"
@@ -5418,15 +5430,16 @@ int main(void) {
   set_spec_date_format();
   logitem = NULL;
   ret = parse_line(line, &logitem);
-  if (!logitem) {
-    printf("logitem returns as NULL\n");
-  } else {
-    if (ret != 0) {
-      printf("err: %s\n", logitem->errstr);
-    }
-    printf("URL: %s\n", logitem->req);
-    printf("Size: %ld\n", logitem->resp_size);
-    printf("From: %s\n", logitem->host);
-  }
+  printlog(ret, logitem);
+
+  // https://github.com/allinurl/goaccess/issues/1059
+  set_log_format_str("~h{ } %^[%d:%t %^] \"%r\" %s %b \"%R\" \"%u\"");
+  conf.date_format = "%d/%b/%Y";
+  conf.time_format = "%T";
+  set_spec_date_format();
+  logitem = NULL;
+  line = "114.5.1.4 191.9.81.0 - - [31/May/2018:00:00:00 +0630] \"GET http://example.com/test HTTP/1.1\" 200 409 \"-\" \"Dalvik/2.1.0 (Linux; U; Android 8.0.0; ONEPLUS A5010 Build/OPR1.170623.032)\"";
+  ret = parse_line(line, &logitem);
+  printlog(ret, logitem);
   return 0;
 }
