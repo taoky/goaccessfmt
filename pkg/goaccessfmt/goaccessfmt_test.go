@@ -1,7 +1,6 @@
 package goaccessfmt_test
 
 import (
-	"reflect"
 	"testing"
 	"time"
 
@@ -23,9 +22,8 @@ func TestCombined(t *testing.T) {
 		t.Error(err)
 	}
 
-	logitem := goaccessfmt.GLogItem{}
 	line := `114.5.1.4 - - [11/Jun/2023:11:23:45 +0800] "GET /example/path/file.img HTTP/1.1" 429 568 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36"`
-	err = goaccessfmt.ParseLine(conf, line, &logitem)
+	logitem, err := goaccessfmt.ParseLine(conf, line)
 	if err != nil {
 		t.Error(err)
 	}
@@ -40,14 +38,14 @@ func TestCombined(t *testing.T) {
 		Method:   "GET",
 		Protocol: "HTTP/1.1",
 	}
-	if !reflect.DeepEqual(logitem, expectedLogitem) {
+	if !logitem.Equal(expectedLogitem) {
 		t.Errorf("want (%v), get (%v)", expectedLogitem, logitem)
 	}
 
 	// Test some weird log
 	line =
 		`114.5.1.4 - - [04/Apr/2024:08:01:12 +0800] "\x16\x03\x01\x00\xCA\x01\x00\x00\xC6\x03\x03\x94b\x22\x06u\xBEi\xF6\xC5cA\x97eq\xF0\xD5\xD3\xE6\x08I" 400 163 "-" "-"`
-	err = goaccessfmt.ParseLine(conf, line, &logitem)
+	logitem, err = goaccessfmt.ParseLine(conf, line)
 	if err != nil {
 		t.Error(err)
 	}
@@ -66,7 +64,7 @@ func TestCombined(t *testing.T) {
 		t.Errorf("want (%v), get (%v)", expectedLogitem, logitem)
 	}
 	line = `114.5.1.5 - - [04/Apr/2024:09:02:13 +0800] "\x16\x03\x01\x00\xEE\x01\x00\x00\xEA\x03\x03\x9C\xB4\x92\xC5{\xE9\xEC\x18\xB1\x17\x04f\xCA\x0F\xF3\xFD\xAA\x98H\xA5N\xBC\xC9\xD7\xF8\x95.H\x15\x13\xF2\xF9 ~W\xB9\x94Qs\x01\x02\xE3c'\xA8pB\xC5\xCC\x10c\xC9\xF4\x99{\x0E1\x90\x81\xBD4J\x10y\x17\x00&\xC0+\xC0/\xC0,\xC00\xCC\xA9\xCC\xA8\xC0\x09\xC0\x13\xC0" 400 163 "-" "-"`
-	err = goaccessfmt.ParseLine(conf, line, &logitem)
+	logitem, err = goaccessfmt.ParseLine(conf, line)
 	if err != nil {
 		t.Error(err)
 	}
@@ -97,9 +95,8 @@ func TestCaddy(t *testing.T) {
 		t.Error(err)
 	}
 
-	logitem := goaccessfmt.GLogItem{}
 	line := `{"level":"info","ts":1646861401.5241024,"logger":"http.log.access","msg":"handled request","request":{"remote_ip":"127.0.0.1","remote_port":"41342","client_ip":"127.0.0.1","proto":"HTTP/2.0","method":"GET","host":"localhost","uri":"/","headers":{"User-Agent":["curl/7.82.0"],"Accept":["*/*"],"Accept-Encoding":["gzip, deflate, br"]},"tls":{"resumed":false,"version":772,"cipher_suite":4865,"proto":"h2","server_name":"example.com"}},"bytes_read": 0,"user_id":"","duration":0.000929675,"size":10900,"status":200,"resp_headers":{"Server":["Caddy"],"Content-Encoding":["gzip"],"Content-Type":["text/html; charset=utf-8"],"Vary":["Accept-Encoding"]}}`
-	err = goaccessfmt.ParseLine(conf, line, &logitem)
+	logitem, err := goaccessfmt.ParseLine(conf, line)
 	if err != nil {
 		t.Error(err)
 	}
@@ -132,9 +129,8 @@ func TestXFF(t *testing.T) {
 		t.Error(err)
 	}
 
-	logitem := goaccessfmt.GLogItem{}
 	line := `114.5.1.4 191.9.81.0 - - [31/May/2018:00:00:00 +0800] "GET http://example.com/test HTTP/1.1" 200 409 "-" "Dalvik/2.1.0 (Linux; U; Android 8.0.0; ONEPLUS A5010 Build/OPR1.170623.032)"`
-	err = goaccessfmt.ParseLine(conf, line, &logitem)
+	logitem, err := goaccessfmt.ParseLine(conf, line)
 	if err != nil {
 		t.Error(err)
 	}
@@ -163,9 +159,9 @@ func TestServerExtension(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	logitem := goaccessfmt.GLogItem{}
+
 	line := `{"level":"info","ts":1646861401.5241024,"logger":"http.log.access","msg":"handled request","request":{"remote_ip":"127.0.0.1","remote_port":"41342","client_ip":"127.0.0.1","proto":"HTTP/2.0","method":"GET","host":"localhost","uri":"/","headers":{"User-Agent":["curl/7.82.0"],"Accept":["*/*"],"Accept-Encoding":["gzip, deflate, br"]},"tls":{"resumed":false,"version":772,"cipher_suite":4865,"proto":"h2","server_name":"example.com"}},"bytes_read": 0,"user_id":"","duration":0.000929675,"size":10900,"status":200,"resp_headers":{"Server":["Caddy"],"Content-Encoding":["gzip"],"Content-Type":["text/html; charset=utf-8"],"Vary":["Accept-Encoding"]},"server":"1.2.3.4"}`
-	err = goaccessfmt.ParseLine(conf, line, &logitem)
+	logitem, err := goaccessfmt.ParseLine(conf, line)
 	if err != nil {
 		t.Error(err)
 	}
@@ -183,9 +179,9 @@ func TestMirrorNginxJSONFormat(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	logitem := goaccessfmt.GLogItem{}
+
 	line := `{"timestamp":1678551332.293,"clientip":"123.45.67.8","serverip":"87.65.4.32","method":"GET","url":"/path/to/a/file","status":200,"size":3009,"resp_time":0.000,"http_host":"example.com","referer":"","user_agent":""}`
-	err = goaccessfmt.ParseLine(conf, line, &logitem)
+	logitem, err := goaccessfmt.ParseLine(conf, line)
 	if err != nil {
 		t.Error(err)
 	}

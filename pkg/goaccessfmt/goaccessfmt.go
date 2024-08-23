@@ -1139,23 +1139,26 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 	return nil
 }
 
-func ParseLine(conf Config, line string, logitem *GLogItem) error {
+func ParseLine(conf Config, line string) (*GLogItem, error) {
 	if !validLine(line) {
-		return errors.New("invalid line")
+		return nil, errors.New("invalid line")
 	}
 	// init logitem
-	*logitem = GLogItem{}
+	logitem := GLogItem{}
 	logitem.Status = -1
 	logitem.Dt = logitem.Dt.In(&conf.Timezone)
 
 	var err error
 	if conf.isJSON {
-		err = parseJSONFormat(conf, line, logitem)
+		err = parseJSONFormat(conf, line, &logitem)
 	} else {
-		err = parseFormat(conf, line, logitem, conf.LogFormat)
+		err = parseFormat(conf, line, &logitem, conf.LogFormat)
+	}
+	if err != nil {
+		return nil, err
 	}
 
-	return err
+	return &logitem, nil
 }
 
 func PrintLog(logitem *GLogItem) {
