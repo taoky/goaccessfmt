@@ -31,8 +31,6 @@ func TestCombined(t *testing.T) {
 	}
 	expectedLogitem := goaccessfmt.GLogItem{
 		Host:     "114.5.1.4",
-		Date:     "20230611",
-		Time:     "11:23:45",
 		Dt:       time.Date(2023, time.Month(6), 11, 11, 23, 45, 0, locationP8),
 		Req:      "/example/path/file.img",
 		Status:   429,
@@ -55,8 +53,6 @@ func TestCombined(t *testing.T) {
 	}
 	expectedLogitem = goaccessfmt.GLogItem{
 		Host:     "114.5.1.4",
-		Date:     "20240404",
-		Time:     "08:01:12",
 		Dt:       time.Date(2024, time.Month(4), 4, 8, 1, 12, 0, locationP8),
 		Req:      `\x16\x03\x01\x00\xCA\x01\x00\x00\xC6\x03\x03\x94b\x22\x06u\xBEi\xF6\xC5cA\x97eq\xF0\xD5\xD3\xE6\x08I`,
 		Status:   400,
@@ -76,8 +72,6 @@ func TestCombined(t *testing.T) {
 	}
 	expectedLogitem = goaccessfmt.GLogItem{
 		Host: "114.5.1.5",
-		Date: "20240404",
-		Time: "09:02:13",
 		Dt:   time.Date(2024, time.Month(4), 4, 9, 2, 13, 0, locationP8),
 		// golang url.QueryUnescape would convert + to space
 		Req:      `\x16\x03\x01\x00\xEE\x01\x00\x00\xEA\x03\x03\x9C\xB4\x92\xC5{\xE9\xEC\x18\xB1\x17\x04f\xCA\x0F\xF3\xFD\xAA\x98H\xA5N\xBC\xC9\xD7\xF8\x95.H\x15\x13\xF2\xF9 ~W\xB9\x94Qs\x01\x02\xE3c'\xA8pB\xC5\xCC\x10c\xC9\xF4\x99{\x0E1\x90\x81\xBD4J\x10y\x17\x00&\xC0 \xC0/\xC0,\xC00\xCC\xA9\xCC\xA8\xC0\x09\xC0\x13\xC0`,
@@ -111,8 +105,6 @@ func TestCaddy(t *testing.T) {
 	}
 	expectedLogitem := goaccessfmt.GLogItem{
 		Host:      "127.0.0.1",
-		Date:      "20220309",
-		Time:      "21:30:01",
 		Dt:        time.Date(2022, 3, 9, 21, 30, 1, 0, locationUTC),
 		VHost:     "localhost",
 		Method:    "GET",
@@ -148,8 +140,6 @@ func TestXFF(t *testing.T) {
 	}
 	expectedLogitem := goaccessfmt.GLogItem{
 		Host:     "114.5.1.4",
-		Date:     "20180531",
-		Time:     "00:00:00",
 		Dt:       time.Date(2018, 5, 31, 0, 0, 0, 0, locationP8),
 		Req:      "http://example.com/test",
 		Agent:    "Dalvik/2.1.0 (Linux; U; Android 8.0.0; ONEPLUS A5010 Build/OPR1.170623.032)",
@@ -201,8 +191,6 @@ func TestMirrorNginxJSONFormat(t *testing.T) {
 	}
 	expectedLogitem := goaccessfmt.GLogItem{
 		Host:      "123.45.67.8",
-		Date:      "20230311",
-		Time:      "16:15:32",
 		Dt:        time.Date(2023, 3, 11, 16, 15, 32, 0, locationUTC),
 		VHost:     "example.com",
 		Method:    "GET",

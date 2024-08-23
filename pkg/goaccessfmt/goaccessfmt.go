@@ -136,7 +136,6 @@ func extractProtocol(token []byte) []byte {
 
 type GLogItem struct {
 	Agent       string
-	Date        string
 	Host        string
 	Method      string
 	Protocol    string
@@ -144,7 +143,6 @@ type GLogItem struct {
 	Ref         string
 	Req         string
 	Status      int
-	Time        string
 	VHost       string
 	Userid      string
 	CacheStatus string
@@ -165,7 +163,6 @@ type GLogItem struct {
 
 func (a GLogItem) Equal(b GLogItem) bool {
 	if a.Agent != b.Agent ||
-		a.Date != b.Date ||
 		a.Host != b.Host ||
 		a.Method != b.Method ||
 		a.Protocol != b.Protocol ||
@@ -173,7 +170,6 @@ func (a GLogItem) Equal(b GLogItem) bool {
 		a.Ref != b.Ref ||
 		a.Req != b.Req ||
 		a.Status != b.Status ||
-		a.Time != b.Time ||
 		a.VHost != b.VHost ||
 		a.Userid != b.Userid ||
 		a.CacheStatus != b.CacheStatus ||
@@ -277,10 +273,9 @@ type Config struct {
 	Timezone            time.Location
 	DoubleDecodeEnabled bool
 
-	dateNumFormat string
-	bandwidth     bool
-	isJSON        bool
-	jsonMap       map[string]string
+	bandwidth bool
+	isJSON    bool
+	jsonMap   map[string]string
 }
 
 func containsSpecifier(conf *Config) {
@@ -294,91 +289,6 @@ func containsSpecifier(conf *Config) {
 	if strings.Contains(conf.LogFormat, "%b") {
 		conf.bandwidth = true
 	}
-}
-
-// cleanDateTimeFormat iterates over the given format and cleans unwanted chars,
-// keeping all date/time specifiers such as %b%Y%d%M%S.
-//
-// On error, an empty string is returned.
-// On success, a clean format containing only date/time specifiers is returned.
-func cleanDateTimeFormat(format string) string {
-	if format == "" {
-		return ""
-	}
-
-	var builder strings.Builder
-	special := false
-
-	for _, ch := range format {
-		if ch == '%' || special {
-			builder.WriteRune(ch)
-			special = !special
-		}
-	}
-
-	return builder.String()
-}
-
-// hasTimestamp determines if the given date format is a timestamp.
-//
-// If it's not a timestamp, false is returned.
-// If it is a timestamp, true is returned.
-func hasTimestamp(fmt string) bool {
-	return fmt == "%s" || fmt == "%f"
-}
-
-func setFormatDate(conf Config) string {
-	if hasTimestamp(conf.DateFormat) {
-		return "%Y%m%d"
-	}
-	return cleanDateTimeFormat(conf.DateFormat)
-}
-
-// isDateAbbreviated determines if the given specifier character is an abbreviated type of date.
-//
-// If it is, true is returned, otherwise, false is returned.
-func isDateAbbreviated(fdate string) bool {
-	return strings.ContainsAny(fdate, "cDF")
-}
-
-const MinDateNumFmtLen = 7
-
-// setDateNumFormat normalizes the date format from the user-provided format to Ymd
-// so it can be properly sorted afterwards.
-// Returns:
-//   - true if the format was successfully set (even if empty).
-//   - false if there was an error or the format couldn't be determined.
-func setDateNumFormat(conf *Config) bool {
-	fdate := setFormatDate(*conf)
-	if fdate == "" {
-		return false
-	}
-
-	if isDateAbbreviated(fdate) {
-		conf.dateNumFormat = "%Y%m%d"
-		return true
-	}
-
-	flen := len(fdate) + 1
-	if flen < MinDateNumFmtLen {
-		flen = MinDateNumFmtLen
-	}
-
-	var buf strings.Builder
-	buf.Grow(flen)
-
-	// always add a %Y
-	buf.WriteString("%Y")
-	if strings.ContainsAny(fdate, "hbmBf*") {
-		buf.WriteString("%m")
-	}
-	if strings.ContainsAny(fdate, "def*") {
-		buf.WriteString("%d")
-	}
-
-	conf.dateNumFormat = buf.String()
-
-	return buf.Len() > 0
 }
 
 // callback is the function type for the callback
@@ -452,7 +362,6 @@ func SetupConfig(logfmt string, datefmt string, timefmt string, timezone *time.L
 		}
 	}
 
-	setDateNumFormat(&conf)
 	return conf, nil
 }
 
@@ -930,9 +839,6 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 	// fmt.Println(string(p), "|", string(*line), "|", string(end), "|")
 	switch p {
 	case 'd':
-		if logitem.Date != "" {
-			return handleDefaultCaseToken(line, specifier)
-		}
 		// Take "Dec  2" and "Nov 22" cases into consideration
 		fmtspcs := countMatches([]byte(conf.DateFormat), ' ')
 		pch := bytes.IndexByte(*line, ' ')
@@ -948,17 +854,8 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if err != nil {
 			return err
 		}
-		date := timefmt.Format(*tm, conf.dateNumFormat)
-		logitem.Date = date
-		_, err = strconv.Atoi(date)
-		if err != nil {
-			return err
-		}
 		setDate(logitem, tm)
 	case 't':
-		if logitem.Time != "" {
-			return handleDefaultCaseToken(line, specifier)
-		}
 		tkn := parseString(line, end, 1)
 		if tkn == nil {
 			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
@@ -967,26 +864,13 @@ func parseSpecifier(conf Config, logitem *GLogItem, line *[]byte, specifier []by
 		if err != nil {
 			return err
 		}
-		time := timefmt.Format(*tm, "%H:%M:%S")
-		logitem.Time = time
 		setTime(logitem, tm)
 	case 'x':
-		if logitem.Time != "" && logitem.Date != "" {
-			return handleDefaultCaseToken(line, specifier)
-		}
 		tkn := parseString(line, end, 1)
 		if tkn == nil {
 			return parseSpecErr(ERR_SPEC_TOKN_NUL, p, tkn)
 		}
 		tm, err := str2time(tkn, []byte(conf.TimeFormat))
-		if err != nil {
-			return err
-		}
-		date := timefmt.Format(*tm, conf.dateNumFormat)
-		time := timefmt.Format(*tm, "%H:%M:%S")
-		logitem.Date = date
-		logitem.Time = time
-		_, err = strconv.Atoi(date)
 		if err != nil {
 			return err
 		}
@@ -1276,8 +1160,6 @@ func ParseLine(conf Config, line string, logitem *GLogItem) error {
 
 func PrintLog(logitem *GLogItem) {
 	fmt.Println("Host", logitem.Host)
-	fmt.Println("Date", logitem.Date)
-	fmt.Println("Time", logitem.Time)
 	fmt.Println("time.Time", logitem.Dt)
 	fmt.Println("VHost", logitem.VHost)
 	fmt.Println("Userid", logitem.Userid)
