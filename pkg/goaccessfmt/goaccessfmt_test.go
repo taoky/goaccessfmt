@@ -163,7 +163,7 @@ func TestXFF(t *testing.T) {
 	}
 }
 
-func TestServerIPExtension(t *testing.T) {
+func TestServerExtension(t *testing.T) {
 	// logfmt := goaccessfmt.Logs.Caddy
 	logfmt := `{ "server": "%S", "ts": "%x.%^", "request": { "client_ip": "%h", "proto":"%H", "method": "%m", "host": "%v", "uri": "%U", "headers": {"User-Agent": ["%u"], "Referer": ["%R"] }, "tls": { "cipher_suite":"%k", "proto": "%K" } }, "duration": "%T", "size": "%b","status": "%s", "resp_headers": { "Content-Type": ["%M"] } }`
 	datefmt := goaccessfmt.Dates.Sec
@@ -178,8 +178,41 @@ func TestServerIPExtension(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	expectedServerIP := "1.2.3.4"
-	if logitem.Server != expectedServerIP {
-		t.Errorf("want (%v), get (%v)", expectedServerIP, logitem.Server)
+	expectedServer := "1.2.3.4"
+	if logitem.Server != expectedServer {
+		t.Errorf("want (%v), get (%v)", expectedServer, logitem.Server)
+	}
+}
+
+func TestMirrorNginxJSONFormat(t *testing.T) {
+	logfmt := `{"timestamp": "%x.%^", "clientip": "%h", "serverip": "%S", "method": "%m", "url": "%U", "status": "%s", "size": "%b", "resp_time": "%T", "http_host": "%v", "referer": "%R", "user_agent": "%u"}`
+	datefmt := goaccessfmt.Dates.Sec
+	timefmt := goaccessfmt.Dates.Sec
+	conf, err := goaccessfmt.SetupConfig(logfmt, datefmt, timefmt, location)
+	if err != nil {
+		t.Error(err)
+	}
+	logitem := goaccessfmt.GLogItem{}
+	line := `{"timestamp":1678551332.293,"clientip":"123.45.67.8","serverip":"87.65.4.32","method":"GET","url":"/path/to/a/file","status":200,"size":3009,"resp_time":0.000,"http_host":"example.com","referer":"","user_agent":""}`
+	err = goaccessfmt.ParseLine(conf, line, &logitem)
+	if err != nil {
+		t.Error(err)
+	}
+	expectedLogitem := goaccessfmt.GLogItem{
+		Host:      "123.45.67.8",
+		Date:      "20230311",
+		Time:      "16:15:32",
+		Dt:        time.Date(2023, 3, 11, 16, 15, 32, 0, location),
+		VHost:     "example.com",
+		Method:    "GET",
+		Req:       "/path/to/a/file",
+		Status:    200,
+		RespSize:  3009,
+		Agent:     "",
+		ServeTime: 0,
+		Server:    "87.65.4.32",
+	}
+	if !reflect.DeepEqual(logitem, expectedLogitem) {
+		t.Errorf("want (%v), get (%v)", expectedLogitem, logitem)
 	}
 }

@@ -2,7 +2,9 @@
 
 A best-effort pure-go implementation of parser.c in [goaccess](https://goaccess.io/).
 
-Reference program extracted from goaccess code: [assets/reference.c](assets/reference.c). 
+Format docs: <https://goaccess.io/man#custom-log>.
+
+Reference program extracted from goaccess code: [assets/reference.c](assets/reference.c).
 
 Quick test reference.c:
 
