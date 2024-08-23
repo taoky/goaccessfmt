@@ -163,6 +163,30 @@ type GLogItem struct {
 	Dt time.Time
 }
 
+func (a GLogItem) Equal(b GLogItem) bool {
+	if a.Agent != b.Agent ||
+		a.Date != b.Date ||
+		a.Host != b.Host ||
+		a.Method != b.Method ||
+		a.Protocol != b.Protocol ||
+		a.Qstr != b.Qstr ||
+		a.Ref != b.Ref ||
+		a.Req != b.Req ||
+		a.Status != b.Status ||
+		a.Time != b.Time ||
+		a.VHost != b.VHost ||
+		a.Userid != b.Userid ||
+		a.CacheStatus != b.CacheStatus ||
+		a.RespSize != b.RespSize ||
+		a.ServeTime != b.ServeTime ||
+		a.MimeType != b.MimeType ||
+		a.TLSType != b.TLSType ||
+		a.TLSCypher != b.TLSCypher || a.Server != b.Server || !a.Dt.Equal(b.Dt) {
+		return false
+	}
+	return true
+}
+
 type errSpec int
 
 const (

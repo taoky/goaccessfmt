@@ -57,7 +57,7 @@ func ParseConfigReader(r io.Reader) (Config, error) {
 	}
 	var location *time.Location
 	if tz == "" {
-		location = time.Now().Location()
+		location = time.UTC
 	} else {
 		// try trim UTC prefix
 		offsetStr := strings.TrimPrefix(tz, "UTC")
